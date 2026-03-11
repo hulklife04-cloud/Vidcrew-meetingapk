@@ -33,12 +33,25 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Patch AndroidManifest permissions
+      - name: Patch AndroidManifest
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>\n</manifest>|' $MANIFEST
+          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n</manifest>|' $MANIFEST
+          # Fix app name showing as "html"
+          sed -i 's|android:label="@string/app_name"|android:label="Vidcrew Meet"|g' $MANIFEST
+          sed -i 's|android:label="@string/title_activity_main"|android:label="Vidcrew Meet"|g' $MANIFEST
 
-      - name: Patch MainActivity for screen share
+      - name: Patch strings.xml
+        run: |
+          echo '<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Vidcrew Meet</string>
+              <string name="title_activity_main">Vidcrew Meet</string>
+              <string name="package_name">com.vidcrew.meet</string>
+              <string name="custom_url_scheme">com.vidcrew.meet</string>
+          </resources>' > android/app/src/main/res/values/strings.xml
+
+      - name: Patch MainActivity
         run: |
           MAIN="android/app/src/main/java/com/vidcrew/meet/MainActivity.java"
           cat > $MAIN << 'EOF'
@@ -46,6 +59,7 @@ jobs:
           import android.os.Bundle;
           import android.webkit.PermissionRequest;
           import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
           import android.webkit.WebView;
           import com.getcapacitor.BridgeActivity;
           public class MainActivity extends BridgeActivity {
@@ -53,32 +67,41 @@ jobs:
             public void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
               WebView webView = getBridge().getWebView();
+              WebSettings settings = webView.getSettings();
+              settings.setMediaPlaybackRequiresUserGesture(false);
+              settings.setAllowFileAccess(true);
+              settings.setAllowContentAccess(true);
               webView.setWebChromeClient(new WebChromeClient() {
                 @Override
                 public void onPermissionRequest(PermissionRequest request) {
-                  request.grant(request.getResources());
+                  runOnUiThread(() -> request.grant(request.getResources()));
                 }
               });
             }
           }
           EOF
 
-      - name: Generate app icon
+      - name: Generate VC logo icon
         run: |
           sudo apt-get install -y imagemagick
           convert -size 1024x1024 xc:"#0c0c0e" \
-            -fill "#E63B2E" -draw "roundrectangle 0,0 1024,1024 180,180" \
-            -font DejaVu-Sans-Bold -pointsize 420 \
-            -fill white -gravity center -annotate 0 "VC" \
+            -fill "#E63B2E" \
+            -draw "roundrectangle 50,50 974,974 160,160" \
+            -font DejaVu-Sans-Bold \
+            -pointsize 500 \
+            -fill white \
+            -gravity Center \
+            -draw "text 0,0 'VC'" \
             /tmp/icon.png
-          convert /tmp/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          echo "Icon generated!"
+          convert /tmp/icon.png -resize 48x48   android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert /tmp/icon.png -resize 72x72   android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert /tmp/icon.png -resize 96x96   android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
           convert /tmp/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
           convert /tmp/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
-          convert /tmp/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
-          convert /tmp/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+          convert /tmp/icon.png -resize 48x48   android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+          convert /tmp/icon.png -resize 72x72   android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+          convert /tmp/icon.png -resize 96x96   android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
           convert /tmp/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
           convert /tmp/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
 
