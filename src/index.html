@@ -546,19 +546,37 @@ function toggleCam(){
 
 async function toggleScreen(){
   if(sharing){stopScreen();return;}
+  if(window.Capacitor&&window.Capacitor.Plugins.ScreenCapture){
+    try{
+      const {ScreenCapture}=window.Capacitor.Plugins;
+      await ScreenCapture.start();
+      const canvas=document.createElement('canvas');
+      canvas.width=360;canvas.height=640;
+      const ctx=canvas.getContext('2d');
+      ScreenCapture.addListener('frame',(data)=>{
+        const img=new Image();
+        img.onload=()=>ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        img.src='data:image/jpeg;base64,'+data.frame;
+      });
+      const stream=canvas.captureStream(10);
+      startSharing(stream);
+      window._scrCleanup=()=>ScreenCapture.stop();
+      return;
+    }catch(e){
+      toast('❌ Screen share denied');return;
+    }
+  }
   if(navigator.mediaDevices?.getDisplayMedia){
     try{
-      const stream=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always'},audio:true}).catch(
-        ()=>navigator.mediaDevices.getDisplayMedia({video:true})
-      );
+      const stream=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always'},audio:true});
       startSharing(stream);return;
     }catch(e){
       if(e.name==='NotAllowedError'){toast('❌ Permission denied');return;}
-      toast('❌ Screen share not available');return;
+      toast('❌ Not available');return;
     }
   }
-  toast('❌ Screen share not supported here');
-}
+  toast('❌ Screen share not supported');
+  }
 
 function startSharing(stream){
   screenStream=stream;sharing=true;
@@ -585,13 +603,14 @@ function startSharing(stream){
 
 function stopScreen(){
   if(!sharing)return;sharing=false;
+  if(window._scrCleanup){window._scrCleanup();window._scrCleanup=null;}
   screenStream?.getTracks().forEach(t=>t.stop());screenStream=null;
   screenCalls.forEach(c=>{try{c.close();}catch(e){}});screenCalls.clear();
   document.getElementById('scr-tile')?.remove();updateGrid();
   document.getElementById('scr-btn').classList.remove('on');
   document.getElementById('sharebar').classList.remove('on');
   toast('Screen share stopped');broadcast({type:'screen_off'});
-}
+  }
 
 function toggleRec(){recOn?stopRec():startRec();}
 function startRec(){
