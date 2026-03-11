@@ -37,24 +37,120 @@ jobs:
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n</manifest>|' $MANIFEST
-          # Fix app name showing as "html"
-          sed -i 's|android:label="@string/app_name"|android:label="Vidcrew Meet"|g' $MANIFEST
-          sed -i 's|android:label="@string/title_activity_main"|android:label="Vidcrew Meet"|g' $MANIFEST
+          sed -i 's|android:theme="@style/AppTheme"|android:theme="@android:style/Theme.NoTitleBar.Fullscreen"|g' $MANIFEST
 
       - name: Patch strings.xml
         run: |
-          echo '<?xml version="1.0" encoding="utf-8"?>
+          cat > android/app/src/main/res/values/strings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">Vidcrew Meet</string>
               <string name="title_activity_main">Vidcrew Meet</string>
               <string name="package_name">com.vidcrew.meet</string>
               <string name="custom_url_scheme">com.vidcrew.meet</string>
-          </resources>' > android/app/src/main/res/values/strings.xml
+          </resources>
+          EOF
+
+      - name: Create ScreenCapturePlugin
+        run: |
+          mkdir -p android/app/src/main/java/com/vidcrew/meet
+          cat > android/app/src/main/java/com/vidcrew/meet/ScreenCapturePlugin.java << 'EOF'
+          package com.vidcrew.meet;
+          import android.app.Activity;
+          import android.content.Context;
+          import android.graphics.Bitmap;
+          import android.graphics.PixelFormat;
+          import android.hardware.display.DisplayManager;
+          import android.hardware.display.VirtualDisplay;
+          import android.media.Image;
+          import android.media.ImageReader;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.util.Base64;
+          import android.util.DisplayMetrics;
+          import android.view.WindowManager;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.ActivityCallback;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import java.io.ByteArrayOutputStream;
+          import java.nio.ByteBuffer;
+          @CapacitorPlugin(name = "ScreenCapture")
+          public class ScreenCapturePlugin extends Plugin {
+              private MediaProjectionManager projectionManager;
+              private MediaProjection mediaProjection;
+              private VirtualDisplay virtualDisplay;
+              private ImageReader imageReader;
+              private Handler handler;
+              private boolean capturing = false;
+              @PluginMethod
+              public void start(PluginCall call) {
+                  projectionManager = (MediaProjectionManager) getContext().getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  android.content.Intent intent = projectionManager.createScreenCaptureIntent();
+                  startActivityForResult(call, intent, "handleResult");
+              }
+              @ActivityCallback
+              private void handleResult(PluginCall call, com.getcapacitor.ActivityResult result) {
+                  if (result.getResultCode() == Activity.RESULT_OK) {
+                      mediaProjection = projectionManager.getMediaProjection(result.getResultCode(), result.getData());
+                      DisplayMetrics metrics = new DisplayMetrics();
+                      ((WindowManager) getContext().getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getMetrics(metrics);
+                      int w = metrics.widthPixels / 2;
+                      int h = metrics.heightPixels / 2;
+                      imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
+                      virtualDisplay = mediaProjection.createVirtualDisplay("VC", w, h, metrics.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader.getSurface(), null, null);
+                      capturing = true;
+                      handler = new Handler(Looper.getMainLooper());
+                      JSObject res = new JSObject();
+                      res.put("width", w);
+                      res.put("height", h);
+                      call.resolve(res);
+                      scheduleCapture();
+                  } else { call.reject("denied"); }
+              }
+              private void scheduleCapture() {
+                  if (!capturing) return;
+                  handler.postDelayed(() -> { sendFrame(); scheduleCapture(); }, 150);
+              }
+              private void sendFrame() {
+                  if (imageReader == null) return;
+                  Image image = imageReader.acquireLatestImage();
+                  if (image == null) return;
+                  try {
+                      Image.Plane[] planes = image.getPlanes();
+                      ByteBuffer buf = planes[0].getBuffer();
+                      int w = image.getWidth(), h = image.getHeight();
+                      int rowPad = planes[0].getRowStride() - planes[0].getPixelStride() * w;
+                      Bitmap bmp = Bitmap.createBitmap(w + rowPad / planes[0].getPixelStride(), h, Bitmap.Config.ARGB_8888);
+                      bmp.copyPixelsFromBuffer(buf);
+                      Bitmap cropped = Bitmap.createBitmap(bmp, 0, 0, w, h);
+                      ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                      cropped.compress(Bitmap.CompressFormat.JPEG, 35, baos);
+                      String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+                      JSObject data = new JSObject();
+                      data.put("frame", b64);
+                      notifyListeners("frame", data);
+                      bmp.recycle(); cropped.recycle();
+                  } catch (Exception e) { } finally { image.close(); }
+              }
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  capturing = false;
+                  if (virtualDisplay != null) virtualDisplay.release();
+                  if (mediaProjection != null) mediaProjection.stop();
+                  if (imageReader != null) imageReader.close();
+                  call.resolve();
+              }
+          }
+          EOF
 
       - name: Patch MainActivity
         run: |
-          MAIN="android/app/src/main/java/com/vidcrew/meet/MainActivity.java"
-          cat > $MAIN << 'EOF'
+          cat > android/app/src/main/java/com/vidcrew/meet/MainActivity.java << 'EOF'
           package com.vidcrew.meet;
           import android.os.Bundle;
           import android.webkit.PermissionRequest;
@@ -66,11 +162,12 @@ jobs:
             @Override
             public void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
+              registerPlugin(ScreenCapturePlugin.class);
               WebView webView = getBridge().getWebView();
-              WebSettings settings = webView.getSettings();
-              settings.setMediaPlaybackRequiresUserGesture(false);
-              settings.setAllowFileAccess(true);
-              settings.setAllowContentAccess(true);
+              WebSettings s = webView.getSettings();
+              s.setMediaPlaybackRequiresUserGesture(false);
+              s.setAllowFileAccess(true);
+              s.setAllowContentAccess(true);
               webView.setWebChromeClient(new WebChromeClient() {
                 @Override
                 public void onPermissionRequest(PermissionRequest request) {
@@ -81,29 +178,23 @@ jobs:
           }
           EOF
 
-      - name: Generate VC logo icon
+      - name: Generate VC logo
         run: |
           sudo apt-get install -y imagemagick
           convert -size 1024x1024 xc:"#0c0c0e" \
             -fill "#E63B2E" \
             -draw "roundrectangle 50,50 974,974 160,160" \
-            -font DejaVu-Sans-Bold \
-            -pointsize 500 \
-            -fill white \
-            -gravity Center \
+            -font DejaVu-Sans-Bold -pointsize 500 \
+            -fill white -gravity Center \
             -draw "text 0,0 'VC'" \
             /tmp/icon.png
-          echo "Icon generated!"
-          convert /tmp/icon.png -resize 48x48   android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 72x72   android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 96x96   android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 48x48   android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
-          convert /tmp/icon.png -resize 72x72   android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
-          convert /tmp/icon.png -resize 96x96   android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
-          convert /tmp/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
-          convert /tmp/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            case $density in
+              mdpi) size=48;; hdpi) size=72;; xhdpi) size=96;; xxhdpi) size=144;; xxxhdpi) size=192;;
+            esac
+            convert /tmp/icon.png -resize ${size}x${size} android/app/src/main/res/mipmap-${density}/ic_launcher.png
+            convert /tmp/icon.png -resize ${size}x${size} android/app/src/main/res/mipmap-${density}/ic_launcher_round.png
+          done
 
       - name: Sync Capacitor
         run: npx cap sync android
