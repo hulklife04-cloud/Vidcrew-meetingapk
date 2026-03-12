@@ -51,7 +51,7 @@ jobs:
           </resources>
           EOF
 
-      - name: Patch MainActivity with screen share
+      - name: Patch MainActivity
         run: |
           cat > android/app/src/main/java/com/vidcrew/meet/MainActivity.java << 'EOF'
           package com.vidcrew.meet;
@@ -71,6 +71,7 @@ jobs:
           import android.os.Looper;
           import android.util.Base64;
           import android.util.DisplayMetrics;
+          import android.view.View;
           import android.view.WindowManager;
           import android.webkit.PermissionRequest;
           import android.webkit.WebChromeClient;
@@ -91,6 +92,12 @@ jobs:
             @Override
             public void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
+              setTitle("Vidcrew Meet");
+              getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+              );
               webView = getBridge().getWebView();
               WebSettings settings = webView.getSettings();
               settings.setMediaPlaybackRequiresUserGesture(false);
@@ -184,6 +191,9 @@ jobs:
           }
           EOF
 
+      - name: Sync Capacitor
+        run: npx cap sync android
+
       - name: Generate VC logo
         run: |
           sudo apt-get install -y imagemagick
@@ -201,9 +211,6 @@ jobs:
             convert /tmp/icon.png -resize ${size}x${size} android/app/src/main/res/mipmap-${density}/ic_launcher.png
             convert /tmp/icon.png -resize ${size}x${size} android/app/src/main/res/mipmap-${density}/ic_launcher_round.png
           done
-
-      - name: Sync Capacitor
-        run: npx cap sync android
 
       - name: Grant gradlew permission
         run: chmod +x android/gradlew
