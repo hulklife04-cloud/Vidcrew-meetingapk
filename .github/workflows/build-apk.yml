@@ -75,6 +75,7 @@ jobs:
           import com.getcapacitor.Plugin;
           import com.getcapacitor.PluginCall;
           import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.ActivityResult;
           import com.getcapacitor.annotation.ActivityCallback;
           import com.getcapacitor.annotation.CapacitorPlugin;
           import java.io.ByteArrayOutputStream;
@@ -94,7 +95,7 @@ jobs:
                   startActivityForResult(call, intent, "handleResult");
               }
               @ActivityCallback
-              private void handleResult(PluginCall call, com.getcapacitor.ActivityResult result) {
+              private void handleResult(PluginCall call, ActivityResult result) {
                   if (result.getResultCode() == Activity.RESULT_OK) {
                       mediaProjection = projectionManager.getMediaProjection(result.getResultCode(), result.getData());
                       DisplayMetrics metrics = new DisplayMetrics();
