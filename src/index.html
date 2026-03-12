@@ -543,29 +543,30 @@ function toggleCam(){
   const v=document.getElementById('local-vid'),a=document.getElementById('local-av');
   camOn?(v.classList.remove('hidden'),a.classList.add('hidden')):(v.classList.add('hidden'),a.classList.remove('hidden'));
 }
-
 async function toggleScreen(){
   if(sharing){stopScreen();return;}
-  if(window.Capacitor&&window.Capacitor.Plugins.ScreenCapture){
-    try{
-      const {ScreenCapture}=window.Capacitor.Plugins;
-      await ScreenCapture.start();
+
+  // Native Android bridge
+  if(window.AndroidBridge){
+    window._onScreenDenied=()=>toast('❌ Screen share denied');
+    window._onScreenStopped=()=>stopScreen();
+    window._onScreenStarted=(w,h)=>{
       const canvas=document.createElement('canvas');
-      canvas.width=360;canvas.height=640;
+      canvas.width=w;canvas.height=h;
       const ctx=canvas.getContext('2d');
-      ScreenCapture.addListener('frame',(data)=>{
+      window._onScreenFrame=(b64)=>{
         const img=new Image();
-        img.onload=()=>ctx.drawImage(img,0,0,canvas.width,canvas.height);
-        img.src='data:image/jpeg;base64,'+data.frame;
-      });
+        img.onload=()=>ctx.drawImage(img,0,0,w,h);
+        img.src='data:image/jpeg;base64,'+b64;
+      };
       const stream=canvas.captureStream(10);
       startSharing(stream);
-      window._scrCleanup=()=>ScreenCapture.stop();
-      return;
-    }catch(e){
-      toast('❌ Screen share denied');return;
-    }
+    };
+    AndroidBridge.startCapture();
+    return;
   }
+
+  // Desktop fallback
   if(navigator.mediaDevices?.getDisplayMedia){
     try{
       const stream=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always'},audio:true});
@@ -577,7 +578,6 @@ async function toggleScreen(){
   }
   toast('❌ Screen share not supported');
   }
-
 function startSharing(stream){
   screenStream=stream;sharing=true;
   const track=screenStream.getVideoTracks()[0];
@@ -604,6 +604,8 @@ function startSharing(stream){
 function stopScreen(){
   if(!sharing)return;sharing=false;
   if(window._scrCleanup){window._scrCleanup();window._scrCleanup=null;}
+  if(window.AndroidBridge){try{AndroidBridge.stopCapture();}catch(e){}}
+window._onScreenFrame=null;
   screenStream?.getTracks().forEach(t=>t.stop());screenStream=null;
   screenCalls.forEach(c=>{try{c.close();}catch(e){}});screenCalls.clear();
   document.getElementById('scr-tile')?.remove();updateGrid();
